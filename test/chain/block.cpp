@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -17,9 +17,10 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include <boost/test/unit_test.hpp>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 
 using namespace bc;
+using namespace bc::system;
 
 // Test helper.
 static bool all_valid(const chain::transaction::list& transactions)
@@ -269,32 +270,32 @@ BOOST_AUTO_TEST_CASE(block__from_data__insufficient_transaction_bytes__failure)
 
 BOOST_AUTO_TEST_CASE(block__genesis__mainnet__valid_structure)
 {
-    const chain::block genesis = settings(bc::config::settings::mainnet).genesis_block;
+    const chain::block genesis = settings(config::settings::mainnet).genesis_block;
     BOOST_REQUIRE(genesis.is_valid());
     BOOST_REQUIRE_EQUAL(genesis.transactions().size(), 1u);
-    BOOST_REQUIRE(genesis.header().merkle() == genesis.generate_merkle_root());
+    BOOST_REQUIRE(genesis.header().merkle_root() == genesis.generate_merkle_root());
 }
 
 BOOST_AUTO_TEST_CASE(block__genesis__testnet__valid_structure)
 {
-    const chain::block genesis = settings(bc::config::settings::testnet).genesis_block;
+    const chain::block genesis = settings(config::settings::testnet).genesis_block;
     BOOST_REQUIRE(genesis.is_valid());
     BOOST_REQUIRE_EQUAL(genesis.transactions().size(), 1u);
-    BOOST_REQUIRE(genesis.header().merkle() == genesis.generate_merkle_root());
+    BOOST_REQUIRE(genesis.header().merkle_root() == genesis.generate_merkle_root());
 }
 
 BOOST_AUTO_TEST_CASE(block__genesis__regtest__valid_structure)
 {
-    const chain::block genesis = settings(bc::config::settings::regtest).genesis_block;
+    const chain::block genesis = settings(config::settings::regtest).genesis_block;
     BOOST_REQUIRE(genesis.is_valid());
     BOOST_REQUIRE_EQUAL(genesis.transactions().size(), 1u);
-    BOOST_REQUIRE(genesis.header().merkle() == genesis.generate_merkle_root());
+    BOOST_REQUIRE(genesis.header().merkle_root() == genesis.generate_merkle_root());
 }
 
 
 BOOST_AUTO_TEST_CASE(block__factory_1__genesis_mainnet__success)
 {
-    const chain::block genesis = settings(bc::config::settings::mainnet).genesis_block;
+    const chain::block genesis = settings(config::settings::mainnet).genesis_block;
     BOOST_REQUIRE_EQUAL(genesis.serialized_size(), 285u);
     BOOST_REQUIRE_EQUAL(genesis.header().serialized_size(), 80u);
 
@@ -309,12 +310,12 @@ BOOST_AUTO_TEST_CASE(block__factory_1__genesis_mainnet__success)
     BOOST_REQUIRE(genesis.header() == block.header());
 
     // Verify merkle root from transactions.
-    BOOST_REQUIRE(genesis.header().merkle() == block.generate_merkle_root());
+    BOOST_REQUIRE(genesis.header().merkle_root() == block.generate_merkle_root());
 }
 
 BOOST_AUTO_TEST_CASE(block__factory_2__genesis_mainnet__success)
 {
-    const chain::block genesis = settings(bc::config::settings::mainnet).genesis_block;
+    const chain::block genesis = settings(config::settings::mainnet).genesis_block;
     BOOST_REQUIRE_EQUAL(genesis.serialized_size(), 285u);
     BOOST_REQUIRE_EQUAL(genesis.header().serialized_size(), 80u);
 
@@ -330,12 +331,12 @@ BOOST_AUTO_TEST_CASE(block__factory_2__genesis_mainnet__success)
     BOOST_REQUIRE(genesis.header() == block.header());
 
     // Verify merkle root from transactions.
-    BOOST_REQUIRE(genesis.header().merkle() == block.generate_merkle_root());
+    BOOST_REQUIRE(genesis.header().merkle_root() == block.generate_merkle_root());
 }
 
 BOOST_AUTO_TEST_CASE(block__factory_3__genesis_mainnet__success)
 {
-    const chain::block genesis = settings(bc::config::settings::mainnet).genesis_block;
+    const chain::block genesis = settings(config::settings::mainnet).genesis_block;
     BOOST_REQUIRE_EQUAL(genesis.serialized_size(), 285u);
     BOOST_REQUIRE_EQUAL(genesis.header().serialized_size(), 80u);
 
@@ -352,7 +353,7 @@ BOOST_AUTO_TEST_CASE(block__factory_3__genesis_mainnet__success)
     BOOST_REQUIRE(genesis.header() == block.header());
 
     // Verify merkle root from transactions.
-    BOOST_REQUIRE(genesis.header().merkle() == block.generate_merkle_root());
+    BOOST_REQUIRE(genesis.header().merkle_root() == block.generate_merkle_root());
 }
 
 BOOST_AUTO_TEST_SUITE_END()
@@ -403,7 +404,7 @@ BOOST_AUTO_TEST_CASE(block__generate_merkle_root__block_with_multiple_transactio
     const auto header = block100k.header();
     const auto transactions = block100k.transactions();
     BOOST_REQUIRE(all_valid(transactions));
-    BOOST_REQUIRE(header.merkle() == block100k.generate_merkle_root());
+    BOOST_REQUIRE(header.merkle_root() == block100k.generate_merkle_root());
 }
 
 BOOST_AUTO_TEST_CASE(block__header_accessor__always__returns_initialized_value)
@@ -710,6 +711,78 @@ BOOST_AUTO_TEST_CASE(block__is_forward_reference__forward_reference__true)
     chain::transaction before{ 1, 0, { { { after.hash(), 0 }, {}, 0 } }, {} };
     value.set_transactions({ before, after });
     BOOST_REQUIRE(value.is_forward_reference());
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_SUITE(is_internal_double_spend_block_tests)
+
+#define HASH_TX1 \
+"bf7c3f5a69a78edd81f3eff7e93a37fb2d7da394d48db4d85e7e5353b9b8e270"
+
+const auto hash_tx1 = hash_literal(HASH_TX1);
+
+#define HASH_TX2 \
+"8a6d9302fbe24f0ec756a94ecfc837eaffe16c43d1e68c62dfe980d99eea556f"
+
+const auto hash_tx2 = hash_literal(HASH_TX2);
+
+#define HASH_TX3 \
+"cb1e303db604f066225eb14d59d3f8d2231200817bc9d4610d2802586bd93f8a"
+
+const auto hash_tx3 = hash_literal(HASH_TX3);
+
+BOOST_AUTO_TEST_CASE(block__is_internal_double_spend__empty_transactions__false)
+{
+    chain::block instance;
+    BOOST_REQUIRE_EQUAL(instance.is_internal_double_spend(), false);
+}
+
+BOOST_AUTO_TEST_CASE(block__is_internal_double_spend__unique_prevouts__false)
+{
+    chain::block instance;
+    chain::transaction::list tx_list;
+    chain::transaction coinbase;
+    tx_list.emplace_back(coinbase);
+    chain::transaction tx1;
+    tx1.inputs().emplace_back(chain::output_point{ hash_tx1, 42 }, chain::script{}, 0);
+    tx_list.emplace_back(tx1);
+    chain::transaction tx2;
+    tx2.inputs().emplace_back(chain::output_point{ hash_tx2, 27 }, chain::script{}, 0);
+    tx_list.emplace_back(tx2);
+    chain::transaction tx3;
+    tx3.inputs().emplace_back(chain::output_point{ hash_tx3, 36 }, chain::script{}, 0);
+    tx_list.emplace_back(tx3);
+    instance.set_transactions(tx_list);
+    BOOST_REQUIRE_EQUAL(instance.is_internal_double_spend(), false);
+}
+
+BOOST_AUTO_TEST_CASE(block__is_internal_double_spend__nonunique_prevouts__true)
+{
+    chain::block instance;
+    chain::transaction::list tx_list;
+    chain::transaction coinbase;
+    tx_list.emplace_back(coinbase);
+    chain::transaction tx1;
+    tx1.inputs().emplace_back(chain::output_point{ hash_tx1, 42 }, chain::script{}, 0);
+    tx_list.emplace_back(tx1);
+    chain::transaction tx2;
+    tx2.inputs().emplace_back(chain::output_point{ hash_tx2, 27 }, chain::script{}, 0);
+    tx_list.emplace_back(tx2);
+    chain::transaction tx3;
+    tx3.inputs().emplace_back(chain::output_point{ hash_tx3, 36 }, chain::script{}, 0);
+    tx_list.emplace_back(tx3);
+    chain::transaction tx4;
+    tx4.inputs().emplace_back(chain::output_point{ hash_tx1, 42 }, chain::script{}, 0);
+    tx_list.emplace_back(tx4);
+    chain::transaction tx5;
+    tx5.inputs().emplace_back(chain::output_point{ hash_tx2, 27 }, chain::script{}, 0);
+    tx_list.emplace_back(tx5);
+    chain::transaction tx6;
+    tx6.inputs().emplace_back(chain::output_point{ hash_tx3, 36 }, chain::script{}, 0);
+    tx_list.emplace_back(tx6);
+    instance.set_transactions(tx_list);
+    BOOST_REQUIRE_EQUAL(instance.is_internal_double_spend(), true);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -17,9 +17,10 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include <boost/test/unit_test.hpp>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 
 using namespace bc;
+using namespace bc::system;
 
 BOOST_AUTO_TEST_SUITE(chain_transaction_tests)
 
@@ -867,7 +868,7 @@ BOOST_AUTO_TEST_CASE(transaction__is_confirmed_double_spend__unspent_inputs__ret
 {
     chain::transaction instance;
     instance.inputs().emplace_back();
-    instance.inputs().back().previous_output().metadata.spent = false;
+    instance.inputs().back().previous_output().metadata.confirmed_spent = false;
     BOOST_REQUIRE(!instance.is_confirmed_double_spend());
 }
 
@@ -875,7 +876,7 @@ BOOST_AUTO_TEST_CASE(transaction__is_confirmed_double_spend__spent_input__return
 {
     chain::transaction instance;
     instance.inputs().emplace_back();
-    instance.inputs().back().previous_output().metadata.spent = true;
+    instance.inputs().back().previous_output().metadata.confirmed_spent = true;
     BOOST_REQUIRE(instance.is_confirmed_double_spend());
 }
 
@@ -1048,6 +1049,37 @@ BOOST_AUTO_TEST_CASE(transaction__hash__block320670__success)
     BOOST_REQUIRE(instance.from_data(data));
     BOOST_REQUIRE(expected == instance.hash());
     BOOST_REQUIRE(data == instance.to_data());
+}
+
+BOOST_AUTO_TEST_CASE(transaction__is_internal_double_spend__empty_prevouts__false)
+{
+    chain::transaction instance;
+    BOOST_REQUIRE_EQUAL(instance.is_internal_double_spend(), false);
+}
+
+BOOST_AUTO_TEST_CASE(transaction__is_internal_double_spend__unique_prevouts__false)
+{
+    chain::transaction instance;
+    const auto hash1 = hash_literal(TX1_HASH);
+    instance.inputs().emplace_back(chain::output_point{ hash1, 42 }, chain::script{}, 0);
+    const auto hash2 = hash_literal(TX4_HASH);
+    instance.inputs().emplace_back(chain::output_point{ hash2, 27 }, chain::script{}, 0);
+    const auto hash3 = hash_literal(TX7_HASH);
+    instance.inputs().emplace_back(chain::output_point{ hash3, 36 }, chain::script{}, 0);
+    BOOST_REQUIRE_EQUAL(instance.is_internal_double_spend(), false);
+}
+
+BOOST_AUTO_TEST_CASE(transaction__is_internal_double_spend__nonunique_prevouts__true)
+{
+    chain::transaction instance;
+    const auto hash1 = hash_literal(TX1_HASH);
+    instance.inputs().emplace_back(chain::output_point{ hash1, 42 }, chain::script{}, 0);
+    const auto hash2 = hash_literal(TX4_HASH);
+    instance.inputs().emplace_back(chain::output_point{ hash2, 27 }, chain::script{}, 0);
+    const auto hash3 = hash_literal(TX7_HASH);
+    instance.inputs().emplace_back(chain::output_point{ hash3, 36 }, chain::script{}, 0);
+    instance.inputs().emplace_back(chain::output_point{ hash3, 36 }, chain::script{}, 0);
+    BOOST_REQUIRE_EQUAL(instance.is_internal_double_spend(), true);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

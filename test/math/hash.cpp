@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -19,9 +19,9 @@
 #include "hash.hpp"
 
 #include <boost/test/unit_test.hpp>
-#include <bitcoin/bitcoin.hpp>
+#include <bitcoin/system.hpp>
 
-using namespace bc;
+using namespace bc::system;
 
 BOOST_AUTO_TEST_SUITE(hash_tests)
 
@@ -87,6 +87,16 @@ BOOST_AUTO_TEST_CASE(pkcs5_pbkdf2_hmac_sha512_test)
     {
         const auto hash = pkcs5_pbkdf2_hmac_sha512(to_chunk(result.passphrase), to_chunk(result.salt), result.iterations);
         BOOST_REQUIRE_EQUAL(encode_base16(hash), result.result);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(scrypt_hash_test)
+{
+    for (const auto& result: scrypt_hash_tests)
+    {
+        data_chunk data;
+        BOOST_REQUIRE(decode_base16(data, result.input));
+        BOOST_REQUIRE_EQUAL(encode_base16(scrypt_hash(data)), result.result);
     }
 }
 

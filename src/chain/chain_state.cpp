@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -16,7 +16,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <bitcoin/bitcoin/chain/chain_state.hpp>
+#include <bitcoin/system/chain/chain_state.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -24,25 +24,26 @@
 #include <iterator>
 #include <boost/multiprecision/integer.hpp>
 #include <boost/range/adaptor/reversed.hpp>
-#include <bitcoin/bitcoin/chain/block.hpp>
-#include <bitcoin/bitcoin/chain/chain_state.hpp>
-#include <bitcoin/bitcoin/chain/compact.hpp>
-#include <bitcoin/bitcoin/chain/script.hpp>
-#include <bitcoin/bitcoin/config/checkpoint.hpp>
-#include <bitcoin/bitcoin/constants.hpp>
-#include <bitcoin/bitcoin/math/hash.hpp>
-#include <bitcoin/bitcoin/math/limits.hpp>
-#include <bitcoin/bitcoin/machine/opcode.hpp>
-#include <bitcoin/bitcoin/machine/rule_fork.hpp>
-#include <bitcoin/bitcoin/settings.hpp>
-#include <bitcoin/bitcoin/unicode/unicode.hpp>
-#include <bitcoin/bitcoin/utility/timer.hpp>
+#include <bitcoin/system/chain/block.hpp>
+#include <bitcoin/system/chain/chain_state.hpp>
+#include <bitcoin/system/chain/compact.hpp>
+#include <bitcoin/system/chain/script.hpp>
+#include <bitcoin/system/config/checkpoint.hpp>
+#include <bitcoin/system/constants.hpp>
+#include <bitcoin/system/math/hash.hpp>
+#include <bitcoin/system/math/limits.hpp>
+#include <bitcoin/system/machine/opcode.hpp>
+#include <bitcoin/system/machine/rule_fork.hpp>
+#include <bitcoin/system/settings.hpp>
+#include <bitcoin/system/unicode/unicode.hpp>
+#include <bitcoin/system/utility/timer.hpp>
 
 namespace libbitcoin {
+namespace system {
 namespace chain {
 
-using namespace bc::config;
-using namespace bc::machine;
+using namespace bc::system::config;
+using namespace bc::system::machine;
 using namespace boost::adaptors;
 
 // Inlines.
@@ -79,7 +80,7 @@ inline uint32_t bits_high(const chain_state::data& values)
 //-----------------------------------------------------------------------------
 
 chain_state::activations chain_state::activation(const data& values,
-    uint32_t forks, const bc::settings& settings)
+    uint32_t forks, const system::settings& settings)
 {
     const auto height = values.height;
     const auto version = values.version.self;
@@ -133,6 +134,9 @@ chain_state::activations chain_state::activation(const data& values,
 
     // retarget_overflow_patch is activated based on configuration alone (hard fork).
     result.forks |= (rule_fork::retarget_overflow_patch & forks);
+
+    // scrypt_proof_of_work is activated based on configuration alone (hard fork).
+    result.forks |= (rule_fork::scrypt_proof_of_work & forks);
 
     // bip16 was activated based on manual inspection of history (~55% rule).
     if (values.timestamp.self >= settings.bip16_activation_time)
@@ -289,7 +293,7 @@ uint32_t chain_state::median_time_past(const data& values, uint32_t)
 //-----------------------------------------------------------------------------
 
 uint32_t chain_state::work_required(const data& values, uint32_t forks,
-    const bc::settings& settings)
+    const system::settings& settings)
 {
     // Invalid parameter via public interface, test is_valid for results.
     if (values.height == 0)
@@ -300,15 +304,16 @@ uint32_t chain_state::work_required(const data& values, uint32_t forks,
         return bits_high(values);
 
     // Mainnet and testnet retarget on interval.
-    if (is_retarget_height(values.height, settings.retargeting_interval))
+    if (is_retarget_height(values.height, settings.retargeting_interval()))
         return work_required_retarget(values, forks,
-            settings.proof_of_work_limit, settings.minimum_timespan,
-            settings.maximum_timespan, settings.retargeting_interval_seconds);
+            settings.proof_of_work_limit, settings.minimum_timespan(),
+            settings.maximum_timespan(),
+            settings.retargeting_interval_seconds());
 
     // Testnet retargets easy on inter-interval.
     if (!script::is_enabled(forks, rule_fork::difficult))
-        return easy_work_required(values, settings.retargeting_interval,
-            settings.proof_of_work_limit, settings.block_spacing_seconds);
+        return easy_work_required(values, settings.retargeting_interval(),
+            settings.proof_of_work_limit, settings.block_spacing_seconds());
 
     // Mainnet not retargeting.
     return bits_high(values);
@@ -467,7 +472,7 @@ chain_state::map chain_state::get_map(size_t height,
 
 // static
 uint32_t chain_state::signal_version(uint32_t forks,
-    const bc::settings& settings)
+    const system::settings& settings)
 {
     if (script::is_enabled(forks, rule_fork::bip65_rule))
         return settings.bip65_version;
@@ -491,9 +496,30 @@ uint32_t chain_state::signal_version(uint32_t forks,
     return settings.first_version;
 }
 
+// static
+uint32_t chain_state::minimum_timespan(uint32_t retargeting_interval_seconds,
+    uint32_t retargeting_factor)
+{
+    return retargeting_interval_seconds / retargeting_factor;
+}
+
+// static
+uint32_t chain_state::maximum_timespan(uint32_t retargeting_interval_seconds,
+    uint32_t retargeting_factor)
+{
+    return retargeting_interval_seconds * retargeting_factor;
+}
+
+// static
+uint32_t chain_state::retargeting_interval(
+    uint32_t retargeting_interval_seconds, uint32_t block_spacing_seconds)
+{
+    return retargeting_interval_seconds / block_spacing_seconds;
+}
+
 // This is promotion from a preceding height to the next.
 chain_state::data chain_state::to_pool(const chain_state& top,
-    const bc::settings& settings)
+    const system::settings& settings)
 {
     // Alias configured forks.
     const auto forks = top.forks_;
@@ -514,7 +540,7 @@ chain_state::data chain_state::to_pool(const chain_state& top,
 
     // If bits collection overflows, dequeue oldest member.
     if (data.bits.ordered.size() >
-        bits_count(height, forks, settings.retargeting_interval))
+        bits_count(height, forks, settings.retargeting_interval()))
         data.bits.ordered.pop_front();
 
     // If version collection overflows, dequeue oldest member.
@@ -529,7 +555,7 @@ chain_state::data chain_state::to_pool(const chain_state& top,
     // Regtest does not perform retargeting.
     // If promoting from retarget height, move that timestamp into retarget.
     if (retarget &&
-        is_retarget_height(height - 1u, settings.retargeting_interval))
+        is_retarget_height(height - 1u, settings.retargeting_interval()))
         data.timestamp.retarget = (script::is_enabled(forks,
             rule_fork::time_warp_patch) && height != 1) ?
             *std::next(data.timestamp.ordered.crbegin()) : data.timestamp.self;
@@ -548,7 +574,8 @@ chain_state::data chain_state::to_pool(const chain_state& top,
 
 // Constructor (top to pool).
 // This generates a state for the pool above the presumed top block state.
-chain_state::chain_state(const chain_state& top, const bc::settings& settings)
+chain_state::chain_state(const chain_state& top,
+    const system::settings& settings)
   : data_(to_pool(top, settings)),
     forks_(top.forks_),
     stale_seconds_(top.stale_seconds_),
@@ -588,7 +615,7 @@ chain_state::data chain_state::to_block(const chain_state& pool,
 // Constructor (tx pool to block).
 // This assumes that the pool state is the same height as the block.
 chain_state::chain_state(const chain_state& pool, const block& block,
-    const bc::settings& settings)
+    const system::settings& settings)
   : data_(to_block(pool, block, settings.bip9_bit0_active_checkpoint,
         settings.bip9_bit1_active_checkpoint)),
     forks_(pool.forks_),
@@ -601,7 +628,7 @@ chain_state::chain_state(const chain_state& pool, const block& block,
 }
 
 chain_state::data chain_state::to_header(const chain_state& parent,
-    const header& header, const bc::settings& settings)
+    const header& header, const system::settings& settings)
 {
     BITCOIN_ASSERT(header.previous_block_hash() == parent.hash());
 
@@ -629,7 +656,7 @@ chain_state::data chain_state::to_header(const chain_state& parent,
 // Constructor (parent to header).
 // This assumes that parent is the state of the header's previous block.
 chain_state::chain_state(const chain_state& parent, const header& header,
-    const bc::settings& settings)
+    const system::settings& settings)
   : data_(to_header(parent, header, settings)),
     forks_(parent.forks_),
     stale_seconds_(parent.stale_seconds_),
@@ -642,7 +669,7 @@ chain_state::chain_state(const chain_state& parent, const header& header,
 
 // Constructor (from raw data).
 chain_state::chain_state(data&& values, const checkpoints& checkpoints,
-    uint32_t forks, uint32_t stale_seconds, const bc::settings& settings)
+    uint32_t forks, uint32_t stale_seconds, const system::settings& settings)
   : data_(std::move(values)),
     forks_(forks),
     stale_seconds_(stale_seconds),
@@ -726,4 +753,5 @@ bool chain_state::is_under_checkpoint() const
 }
 
 } // namespace chain
+} // namespace system
 } // namespace libbitcoin

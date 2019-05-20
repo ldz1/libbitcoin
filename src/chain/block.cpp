@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2011-2017 libbitcoin developers (see AUTHORS)
+ * Copyright (c) 2011-2019 libbitcoin developers (see AUTHORS)
  *
  * This file is part of libbitcoin.
  *
@@ -16,7 +16,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <bitcoin/bitcoin/chain/block.hpp>
+#include <bitcoin/system/chain/block.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -30,74 +30,76 @@
 #include <utility>
 #include <unordered_map>
 #include <boost/range/adaptor/reversed.hpp>
-#include <bitcoin/bitcoin/chain/chain_state.hpp>
-#include <bitcoin/bitcoin/chain/compact.hpp>
-#include <bitcoin/bitcoin/chain/input_point.hpp>
-#include <bitcoin/bitcoin/chain/script.hpp>
-#include <bitcoin/bitcoin/config/checkpoint.hpp>
-#include <bitcoin/bitcoin/constants.hpp>
-#include <bitcoin/bitcoin/error.hpp>
-#include <bitcoin/bitcoin/formats/base_16.hpp>
-#include <bitcoin/bitcoin/math/hash.hpp>
-#include <bitcoin/bitcoin/math/limits.hpp>
-#include <bitcoin/bitcoin/machine/number.hpp>
-#include <bitcoin/bitcoin/machine/opcode.hpp>
-#include <bitcoin/bitcoin/machine/rule_fork.hpp>
-#include <bitcoin/bitcoin/message/messages.hpp>
-#include <bitcoin/bitcoin/settings.hpp>
-#include <bitcoin/bitcoin/utility/asio.hpp>
-#include <bitcoin/bitcoin/utility/assert.hpp>
-#include <bitcoin/bitcoin/utility/container_sink.hpp>
-#include <bitcoin/bitcoin/utility/container_source.hpp>
-#include <bitcoin/bitcoin/utility/istream_reader.hpp>
-#include <bitcoin/bitcoin/utility/ostream_writer.hpp>
+#include <bitcoin/system/chain/chain_state.hpp>
+#include <bitcoin/system/chain/compact.hpp>
+#include <bitcoin/system/chain/input_point.hpp>
+#include <bitcoin/system/chain/script.hpp>
+#include <bitcoin/system/config/checkpoint.hpp>
+#include <bitcoin/system/constants.hpp>
+#include <bitcoin/system/error.hpp>
+#include <bitcoin/system/formats/base_16.hpp>
+#include <bitcoin/system/math/hash.hpp>
+#include <bitcoin/system/math/limits.hpp>
+#include <bitcoin/system/machine/number.hpp>
+#include <bitcoin/system/machine/opcode.hpp>
+#include <bitcoin/system/machine/rule_fork.hpp>
+#include <bitcoin/system/message/messages.hpp>
+#include <bitcoin/system/settings.hpp>
+#include <bitcoin/system/utility/asio.hpp>
+#include <bitcoin/system/utility/assert.hpp>
+#include <bitcoin/system/utility/container_sink.hpp>
+#include <bitcoin/system/utility/container_source.hpp>
+#include <bitcoin/system/utility/istream_reader.hpp>
+#include <bitcoin/system/utility/ostream_writer.hpp>
 
 namespace libbitcoin {
+namespace system {
 namespace chain {
 
-using namespace bc::config;
-using namespace bc::machine;
+using namespace bc::system::config;
+using namespace bc::system::machine;
 using namespace boost::adaptors;
 
 // Constructors.
 //-----------------------------------------------------------------------------
 
 block::block()
-  : header_(),
-    metadata{}
+  : metadata{},
+    header_(),
+    transactions_()
 {
 }
 
 block::block(const block& other)
-  : total_inputs_(other.total_inputs_cache()),
-    non_coinbase_inputs_(other.non_coinbase_inputs_cache()),
+  : metadata(other.metadata),
     header_(other.header_),
     transactions_(other.transactions_),
-    metadata(other.metadata)
+    total_inputs_(other.total_inputs_cache()),
+    non_coinbase_inputs_(other.non_coinbase_inputs_cache())
 {
 }
 
 block::block(block&& other)
-  : total_inputs_(other.total_inputs_cache()),
-    non_coinbase_inputs_(other.non_coinbase_inputs_cache()),
+  : metadata(other.metadata),
     header_(std::move(other.header_)),
     transactions_(std::move(other.transactions_)),
-    metadata(other.metadata)
+    total_inputs_(other.total_inputs_cache()),
+    non_coinbase_inputs_(other.non_coinbase_inputs_cache())
 {
 }
 
 block::block(const chain::header& header,
     const transaction::list& transactions)
-  : header_(header),
-    transactions_(transactions),
-    metadata{}
+  : metadata{},
+    header_(header),
+    transactions_(transactions)
 {
 }
 
 block::block(chain::header&& header, transaction::list&& transactions)
-  : header_(std::move(header)),
-    transactions_(std::move(transactions)),
-    metadata{}
+  : metadata{},
+    header_(std::move(header)),
+    transactions_(std::move(transactions))
 {
 }
 
@@ -178,7 +180,8 @@ bool block::from_data(std::istream& stream, bool witness)
 // Full block deserialization is always canonical encoding.
 bool block::from_data(reader& source, bool witness)
 {
-    metadata.start_deserialize = asio::steady_clock::now();
+    const auto start = asio::steady_clock::now();
+
     reset();
 
     if (!header_.from_data(source, true))
@@ -204,7 +207,7 @@ bool block::from_data(reader& source, bool witness)
     if (!source)
         reset();
 
-    metadata.end_deserialize = asio::steady_clock::now();
+    metadata.deserialize = asio::steady_clock::now() - start;
     return source;
 }
 
@@ -230,7 +233,7 @@ data_chunk block::to_data(bool witness) const
     const auto size = serialized_size(witness);
     data.reserve(size);
     data_sink ostream(data);
-    to_data(ostream);
+    to_data(ostream, witness);
     ostream.flush();
     BITCOIN_ASSERT(data.size() == size);
     return data;
@@ -662,7 +665,7 @@ bool block::is_internal_double_spend() const
 
 bool block::is_valid_merkle_root() const
 {
-    return generate_merkle_root() == header_.merkle();
+    return generate_merkle_root() == header_.merkle_root();
 }
 
 // Overflow returns max_uint64.
@@ -799,13 +802,12 @@ code block::connect_transactions(const chain_state& state) const
 
 // These checks are self-contained; blockchain (and so version) independent.
 code block::check(uint64_t max_money, uint32_t timestamp_limit_seconds,
-    uint32_t proof_of_work_limit) const
+    uint32_t proof_of_work_limit, bool scrypt, bool header) const
 {
-    metadata.start_check = asio::steady_clock::now();
-
     code ec;
 
-    if ((ec = header_.check(timestamp_limit_seconds, proof_of_work_limit)))
+    if (header && ((ec = header_.check(timestamp_limit_seconds,
+        proof_of_work_limit, scrypt))))
         return ec;
 
     // TODO: relates to total of tx.size(false) (pool cache).
@@ -848,8 +850,8 @@ code block::check(uint64_t max_money, uint32_t timestamp_limit_seconds,
         return check_transactions(max_money);
 }
 
-code block::accept(const bc::settings& settings, bool transactions, bool header)
-    const
+code block::accept(const system::settings& settings, bool transactions,
+    bool header) const
 {
     const auto state = header_.metadata.state;
     return state ? accept(*state, settings, transactions, header) :
@@ -857,11 +859,9 @@ code block::accept(const bc::settings& settings, bool transactions, bool header)
 }
 
 // These checks assume that prevout caching is completed on all tx.inputs.
-code block::accept(const chain_state& state, const bc::settings& settings,
-    bool transactions, bool header) const
+code block::accept(const chain_state& state,
+    const system::settings& settings, bool transactions, bool header) const
 {
-    metadata.start_accept = asio::steady_clock::now();
-
     code ec;
     const auto bip16 = state.is_enabled(rule_fork::bip16_rule);
     const auto bip34 = state.is_enabled(rule_fork::bip34_rule);
@@ -919,8 +919,6 @@ code block::connect() const
 
 code block::connect(const chain_state& state) const
 {
-    metadata.start_connect = asio::steady_clock::now();
-
     if (state.is_under_checkpoint())
         return error::success;
 
@@ -929,4 +927,5 @@ code block::connect(const chain_state& state) const
 }
 
 } // namespace chain
+} // namespace system
 } // namespace libbitcoin
